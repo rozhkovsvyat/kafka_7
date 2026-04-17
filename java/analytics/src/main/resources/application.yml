@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: analytics
+
+kafka:
+  local:
+    bootstrap-servers: ${LOCAL_KAFKA_BOOTSTRAP:localhost:29092}
+    group-id: analytics-ingest
+  yc:
+    bootstrap-servers: ${BOOTSTRAP_SERVER}
+    security-protocol: SASL_SSL
+    sasl-mechanism: SCRAM-SHA-512
+    sasl-jaas-config: >
+      org.apache.kafka.common.security.scram.ScramLoginModule required
+      username="${KAFKA_USER}" password="${KAFKA_PASS}";
+    ssl-truststore-location: ${CERT_DIR}/client.truststore.jks
+    ssl-truststore-password: ${STORE_PASS}
+
+hdfs:
+  webhdfs-url: ${HDFS_NAMENODE_URL:http://localhost:9870}
+
+topics:
+  shop-products: ${TOPIC_SHOP_PRODUCTS:shop-products}
+  client-queries: ${TOPIC_CLIENT_QUERIES:client-queries}
+  recommendations: ${TOPIC_RECOMMENDATIONS:recommendations}
+
+ingest:
+  poll-timeout-seconds: 15

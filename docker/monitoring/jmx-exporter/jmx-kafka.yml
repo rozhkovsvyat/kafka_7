@@ -1,0 +1,48 @@
+hostPort: kafka-local:9999
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value
+    name: kafka_server_replicamanager_underreplicatedpartitions
+    type: GAUGE
+
+  - pattern: kafka.controller<type=KafkaController, name=ActiveControllerCount><>Value
+    name: kafka_controller_kafkacontroller_activecontrollercount
+    type: GAUGE
+
+  - pattern: kafka.controller<type=KafkaController, name=OfflinePartitionsCount><>Value
+    name: kafka_controller_kafkacontroller_offlinepartitionscount
+    type: GAUGE
+
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=MessagesInPerSec><>Count
+    name: kafka_server_brokertopicmetrics_messagesinpersec_total
+    type: COUNTER
+
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec><>Count
+    name: kafka_server_brokertopicmetrics_bytesinpersec_total
+    type: COUNTER
+
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec><>Count
+    name: kafka_server_brokertopicmetrics_bytesoutpersec_total
+    type: COUNTER
+
+  - pattern: "kafka.network<type=RequestMetrics, name=RequestsPerSec, request=(.+)><>Count"
+    name: kafka_network_requestmetrics_requestspersec_total
+    labels:
+      request: "$1"
+    type: COUNTER
+
+  - pattern: "kafka.log<type=Log, name=Size, topic=(.+), partition=(.+)><>Value"
+    name: kafka_log_log_size
+    labels:
+      topic: "$1"
+      partition: "$2"
+    type: GAUGE
+
+  - pattern: kafka.server<type=ReplicaManager, name=LeaderCount><>Value
+    name: kafka_server_replicamanager_leadercount
+    type: GAUGE
+
+  - pattern: kafka.server<type=ReplicaManager, name=PartitionCount><>Value
+    name: kafka_server_replicamanager_partitioncount
+    type: GAUGE

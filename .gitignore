@@ -1,0 +1,37 @@
+# Секреты и конфигурации с паролями
+.env
+*.jks
+*.p12
+*.pem
+scripts/client.properties
+client.properties
+
+# Maven build
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+
+# Runtime state
+banned.txt
+data/client-queries.jsonl
+data/connect-output/
+
+# Временные файлы проектирования
+tmp/
+
+# Logs
+*.log
+logs/
+
+# Docker volumes (локальные данные)
+docker/volumes/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

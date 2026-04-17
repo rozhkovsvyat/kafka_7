@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: shop-api
+  kafka:
+    bootstrap-servers: ${BOOTSTRAP_SERVER}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        max.in.flight.requests.per.connection: 1
+    properties:
+      security.protocol: SASL_SSL
+      sasl.mechanism: SCRAM-SHA-512
+      sasl.jaas.config: >-
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${KAFKA_USER}"
+        password="${KAFKA_PASS}";
+      ssl.truststore.location: ${CERT_DIR}/client.truststore.jks
+      ssl.truststore.password: ${STORE_PASS}
+
+shop:
+  topic: ${TOPIC_SHOP_PRODUCTS:shop-products}
+  products:
+    file: ${SHOP_PRODUCTS_FILE}
+
+logging:
+  level:
+    com.marketplace: INFO
+    org.apache.kafka: WARN
+    org.springframework.kafka: WARN

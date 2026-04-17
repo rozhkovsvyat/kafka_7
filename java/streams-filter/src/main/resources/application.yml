@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: streams-filter
+
+kafka:
+  bootstrap-servers: ${BOOTSTRAP_SERVER}
+  security-protocol: SASL_SSL
+  sasl-mechanism: SCRAM-SHA-512
+  sasl-jaas-config: >
+    org.apache.kafka.common.security.scram.ScramLoginModule required
+    username="${KAFKA_USER}" password="${KAFKA_PASS}";
+  ssl-truststore-location: ${CERT_DIR}/client.truststore.jks
+  ssl-truststore-password: ${STORE_PASS}
+
+topics:
+  source: ${TOPIC_SHOP_PRODUCTS:shop-products}
+  sink: ${TOPIC_PRODUCTS_FILTERED:products-filtered}
+
+banned-list-file: banned.txt

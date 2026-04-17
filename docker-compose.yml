@@ -1,0 +1,254 @@
+services:
+
+  # ── Второй кластер Kafka (локальный, для MirrorMaker и аналитики) ──
+  kafka-local:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-local
+    ports:
+      - "29092:29092"
+      - "9999:9999"
+    environment:
+      CLUSTER_ID: "TG9jYWxLYWZrYUNsdXN0IQ"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-local:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-local:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka-local
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── MirrorMaker 2: YC Kafka → kafka-local ──────────────────
+  mirrormaker:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: mirrormaker
+    depends_on:
+      kafka-local:
+        condition: service_healthy
+    volumes:
+      - ${USERPROFILE}/.kafka:/kafka-certs:ro
+      - ./docker/mirrormaker2:/config:ro
+    environment:
+      BOOTSTRAP_SERVER: ${BOOTSTRAP_SERVER}
+      KAFKA_PASS_APP: ${KAFKA_PASS_APP}
+      KAFKA_USER_MIRROR: ${KAFKA_USER_MIRROR}
+      STORE_PASS: ${STORE_PASS}
+      KAFKA_HEAP_OPTS: "-Xms64m -Xmx192m"
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        sed \
+          -e "s|\$${BOOTSTRAP_SERVER}|$$BOOTSTRAP_SERVER|g" \
+          -e "s|\$${KAFKA_PASS_APP}|$$KAFKA_PASS_APP|g" \
+          -e "s|\$${KAFKA_USER_MIRROR}|$$KAFKA_USER_MIRROR|g" \
+          -e "s|\$${STORE_PASS}|$$STORE_PASS|g" \
+          /config/mm2.properties > /tmp/mm2.properties
+        export KAFKA_LOG4J_OPTS="-Dlog4j.configuration=file:/etc/kafka/connect-log4j.properties"
+        connect-mirror-maker /tmp/mm2.properties
+    restart: unless-stopped
+
+  # ── HDFS NameNode ──────────────────────────────────────────
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    environment:
+      CLUSTER_NAME: local
+      HDFS_NAMENODE_OPTS: "-Xms128m -Xmx256m -XX:+UseG1GC"
+    env_file:
+      - ./docker/hadoop/hadoop.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870/"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── HDFS DataNode ───────────────────────────────────────────
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    ports:
+      - "9864:9864"
+    depends_on:
+      namenode:
+        condition: service_healthy
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+      HDFS_DATANODE_OPTS: "-Xms64m -Xmx128m -XX:+UseG1GC"
+    env_file:
+      - ./docker/hadoop/hadoop.env
+    restart: unless-stopped
+
+
+  # ── Spark (PySpark 3.5.4 + Java 17, аналитика) ─────────────
+  spark:
+    build: ./docker/spark
+    container_name: spark
+    volumes:
+      - ./docker/spark:/scripts
+    environment:
+      HDFS_WEBHDFS_URL: http://namenode:9870
+    depends_on:
+      namenode:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Kafka Connect (File Sink: products-filtered → файл) ────
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    container_name: kafka-connect
+    ports:
+      - "8083:8083"
+    volumes:
+      - ${USERPROFILE}/.kafka:/kafka-certs:ro
+      - ./data/connect-output:/data
+      - ./docker/kafka-connect:/usr/share/java/connect-file:ro
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: ${BOOTSTRAP_SERVER}
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: kafka-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      CONNECT_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_SASL_MECHANISM: SCRAM-SHA-512
+      CONNECT_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${KAFKA_USER_CONNECT}" password="${KAFKA_PASS_APP}";
+      CONNECT_SSL_TRUSTSTORE_LOCATION: /kafka-certs/client.truststore.jks
+      CONNECT_SSL_TRUSTSTORE_PASSWORD: ${STORE_PASS}
+      CONNECT_CONSUMER_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_CONSUMER_SASL_MECHANISM: SCRAM-SHA-512
+      CONNECT_CONSUMER_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${KAFKA_USER_CONNECT}" password="${KAFKA_PASS_APP}";
+      CONNECT_CONSUMER_SSL_TRUSTSTORE_LOCATION: /kafka-certs/client.truststore.jks
+      CONNECT_CONSUMER_SSL_TRUSTSTORE_PASSWORD: ${STORE_PASS}
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
+
+  # ── Kafka UI: веб-интерфейс для обоих кластеров ────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: yc-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${BOOTSTRAP_SERVER}
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_SSL
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-512
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${KAFKA_USER}" password="${KAFKA_PASS}";
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_LOCATION: /kafka-certs/client.truststore.jks
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_PASSWORD: ${STORE_PASS}
+      KAFKA_CLUSTERS_1_NAME: local-kafka
+      KAFKA_CLUSTERS_1_BOOTSTRAPSERVERS: kafka-local:9092
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+    volumes:
+      - ${USERPROFILE}/.kafka:/kafka-certs:ro
+    restart: unless-stopped
+
+  # ── JMX Exporter: kafka-local → метрики для Prometheus ────────
+  jmx-exporter:
+    image: bitnami/jmx-exporter:latest
+    container_name: jmx-exporter
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./docker/monitoring/jmx-exporter/jmx-kafka.yml:/etc/jmx-exporter/config.yml:ro
+    command: ["5556", "/etc/jmx-exporter/config.yml"]
+    depends_on:
+      kafka-local:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Prometheus ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/monitoring/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    depends_on:
+      - jmx-exporter
+    restart: unless-stopped
+
+  # ── Grafana ────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/kafka-dashboard.json
+    volumes:
+      - ./docker/monitoring/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./docker/monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./docker/monitoring/grafana/kafka-dashboard.json:/etc/grafana/provisioning/dashboards/kafka-dashboard.json:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ── Alertmanager ───────────────────────────────────────────────
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./docker/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.tpl:ro
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed \
+          -e "s|\$${TELEGRAM_BOT_TOKEN}|$$TELEGRAM_BOT_TOKEN|g" \
+          -e "s|\$${TELEGRAM_CHAT_ID}|$$TELEGRAM_CHAT_ID|g" \
+          /etc/alertmanager/alertmanager.yml.tpl > /tmp/alertmanager.yml
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml
+    restart: unless-stopped

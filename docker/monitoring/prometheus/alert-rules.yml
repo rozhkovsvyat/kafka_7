@@ -1,0 +1,38 @@
+groups:
+  - name: kafka
+    rules:
+      - alert: KafkaBrokerDown
+        expr: up{job="kafka-local"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka broker kafka-local недоступен"
+          description: "JMX Exporter не получает метрики с kafka-local более 1 минуты. Брокер может быть остановлен."
+
+      - alert: KafkaUnderReplicatedPartitions
+        expr: kafka_server_replicamanager_underreplicatedpartitions > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Есть under-replicated партиции"
+          description: "Количество under-replicated партиций: {{ $value }}. Это может указывать на отставание реплик."
+
+      - alert: KafkaOfflinePartitions
+        expr: kafka_controller_kafkacontroller_offlinepartitionscount > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Есть offline партиции"
+          description: "Количество offline партиций: {{ $value }}. Данные в этих партициях недоступны."
+
+      - alert: KafkaNoActiveController
+        expr: kafka_controller_kafkacontroller_activecontrollercount == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Нет активного контроллера Kafka"
+          description: "Активный контроллер отсутствует. Кластер не может назначать лидеров партиций."
